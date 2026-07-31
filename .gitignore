@@ -1,3 +1,6 @@
+# Bundle artifacts
+*.zip
+
 # CMake
 /build/
 /out/
