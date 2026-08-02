@@ -89,9 +89,9 @@ struct LoreResult {
 	std::string error_message;
 };
 
-// Thin C++ wrapper around lore-capi (third_party/lore/include/lore.h),
-// adapting its asynchronous, event-callback API (see LoreCall) to the
-// synchronous calls EditorVCSInterface's virtual methods need.
+// Thin C++ wrapper around lore-capi (third_party/lore's lore.h), adapting
+// its asynchronous, event-callback API (see LoreCall) to the synchronous
+// calls EditorVCSInterface's virtual methods need.
 class LoreClient {
 public:
 	// Must be called once before any repository operation; wraps

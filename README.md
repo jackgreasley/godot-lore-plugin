@@ -4,7 +4,7 @@
 
 An in-editor Godot GDExtension bringing native support for Epic Games' [Lore](https://epicgames.github.io/lore/) source control system, mirroring the UX of Godot's built-in Git integration (the first-party `godot-git-plugin`).
 
-The plugin subclasses Godot's `EditorVCSInterface` and drives it via a vendored snapshot of Lore's C API (`lore-capi`/`lore.h`) — the same integration point Epic's own in-progress VS Code plugin is built against. Lore is linked dynamically (`lore.dll` + a small import lib), not statically: the raw staticlib archive `cargo`/`cbindgen` also produce is unlinked and runs into the hundreds of MB to multiple GB (no dead-code elimination happens until something actually links against it), whereas the `cdylib` build is already linked and stripped down to ~30MB. `lore.dll` ships alongside the extension's own DLL as a genuine runtime dependency.
+The plugin subclasses Godot's `EditorVCSInterface` and drives it via Lore's C API (`lore-capi`/`lore.h`), built from a pinned `third_party/lore` submodule checkout — the same integration point Epic's own in-progress VS Code plugin is built against. Lore is linked dynamically (`lore.dll` + a small import lib), not statically: the raw staticlib archive `cargo`/`cbindgen` also produce is unlinked and runs into the hundreds of MB to multiple GB (no dead-code elimination happens until something actually links against it), whereas the `cdylib` build is already linked and stripped down to ~30MB. `lore.dll` ships alongside the extension's own DLL as a genuine runtime dependency.
 
 Status: core functionality in place and verified — status, diff, stage/unstage/discard, commit, commit history (list and per-commit diff), branch list/current/checkout/create/remove, and push/pull against a real server. See "What works" and "Known limitations" below.
 
@@ -17,9 +17,8 @@ src/                            GDExtension C++ source
   lore_vcs_plugin.*             LoreVCSPlugin : EditorVCSInterface, the actual VCS plugin
 tests/lore_ffi_test.cpp         Standalone console regression harness for lore_ffi (no Godot involved)
 third_party/godot-cpp/          Submodule: C++ bindings for Godot's GDExtension API
-third_party/lore/               Vendored snapshot: lore.h + lore.dll.lib + lore.dll (see tools/update-lore-snapshot.ps1)
+third_party/lore/               Submodule: Lore source, built via cargo by CMake (see "Building")
 addons/godot-lore-plugin/       Standard Godot addon layout (this is what would ship)
-tools/update-lore-snapshot.ps1  Rebuilds third_party/lore/ from a local Lore checkout
 ```
 
 ## Installing the addon
@@ -51,7 +50,7 @@ These aren't bugs — they're either genuine gaps in what Lore's API offers vers
 - CMake 3.19+
 - An MSVC toolchain (Visual Studio Build Tools) — Windows is the only supported platform for now
 - A Godot 4.3+ editor binary and a project to load the addon into, so the extension is tested against the exact `EditorVCSInterface` API surface it was built for (see "Testing" below)
-- Rust + Cargo, only if you need to refresh the vendored Lore snapshot via `tools/update-lore-snapshot.ps1`
+- Rust + Cargo — CMake builds Lore's C API from the `third_party/lore` submodule as part of the build; the first build needs network access to fetch its crate dependencies
 
 ## Building
 
@@ -62,7 +61,9 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
 
-This produces `addons/godot-lore-plugin/bin/godot-lore-plugin.windows.editor.x86_64.dll` (referenced by `addons/godot-lore-plugin/godot-lore-plugin.gdextension`) plus a copy of `lore.dll` alongside it, since the extension DLL depends on it at load time.
+This produces `addons/godot-lore-plugin/bin/godot-lore-plugin.windows.editor.x86_64.dll` (referenced by `addons/godot-lore-plugin/godot-lore-plugin.gdextension`) plus a copy of `lore.dll` alongside it, since the extension DLL depends on it at load time. Along the way, CMake builds `lore.dll`/`lore.dll.lib`/`lore.h` from `third_party/lore` via `cargo` and stages them under `build/lore/` — there's no separate step for this.
+
+Building regenerates a handful of files tracked inside `third_party/lore` itself (codegen'd proto bindings, `lore-capi/lore.h`), so `git status` may show the submodule as having local modifications after a build. These are build byproducts, not something to commit — `git -C third_party/lore checkout -- .` clears them.
 
 ## Testing
 
@@ -71,15 +72,17 @@ Two levels:
 - `tests/lore_ffi_test.cpp` (built as `lore_ffi_test`) exercises the `lore_ffi` wrapper directly against a real local Lore repository, no Godot involved — the fastest way to check a change to `src/lore_ffi/` before touching the editor. Run it with no arguments for status/diff, or see its header comment for the `--write-ops-demo`/`--discard-demo`/`--branch-demo`/`--push-demo`/`--pull-demo` regression modes.
 - For the real thing, create or open a Godot 4.3+ project with the addon installed (see "Installing the addon" above) and a `.lore` repository at its root (Lore doesn't search upward for one the way Git does), then: **Project → Version Control → Version Control Settings...**, select `LoreVCSPlugin`, connect.
 
-## Updating the vendored Lore snapshot
+## Updating the Lore version
 
-`third_party/lore/` is a point-in-time snapshot, not a live build of the Lore checkout. Refresh it with:
+`third_party/lore` is a submodule pinned to a specific Lore commit. To bump it:
 
 ```powershell
-tools/update-lore-snapshot.ps1
+git -C third_party/lore fetch
+git -C third_party/lore checkout <ref>
+git add third_party/lore
 ```
 
-This assumes a sibling checkout of the Lore repository; pass `-LoreRepoPath` to override.
+The next build picks up the new pin automatically — no separate vendoring step.
 
 ## License
 

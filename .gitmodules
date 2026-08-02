@@ -2,3 +2,7 @@
 	path = third_party/godot-cpp
 	url = https://github.com/godotengine/godot-cpp.git
 	branch = master
+[submodule "third_party/lore"]
+	path = third_party/lore
+	url = https://github.com/EpicGames/lore.git
+	branch = main
