@@ -4,9 +4,7 @@
 
 An in-editor Godot GDExtension bringing native support for Epic Games' [Lore](https://epicgames.github.io/lore/) source control system, mirroring the UX of Godot's built-in Git integration (the first-party `godot-git-plugin`).
 
-The plugin subclasses Godot's `EditorVCSInterface` and drives it via Lore's C API (`lore-capi`/`lore.h`), built from a pinned `third_party/lore` submodule checkout — the same integration point Epic's own in-progress VS Code plugin is built against. Lore is linked dynamically (`lore.dll` + a small import lib), not statically: the raw staticlib archive `cargo`/`cbindgen` also produce is unlinked and runs into the hundreds of MB to multiple GB (no dead-code elimination happens until something actually links against it), whereas the `cdylib` build is already linked and stripped down to ~30MB. `lore.dll` ships alongside the extension's own DLL as a genuine runtime dependency.
-
-Status: core functionality in place and verified — status, diff, stage/unstage/discard, commit, commit history (list and per-commit diff), branch list/current/checkout/create/remove, and push/pull against a real server. See "What works" and "Known limitations" below.
+The plugin subclasses Godot's `EditorVCSInterface` and drives it via Lore's C API (`lore-capi`/`lore.h`), built from a pinned `third_party/lore` submodule checkout. Lore is linked dynamically (`lore.dll` + a small import lib), not statically: the raw staticlib archive `cargo`/`cbindgen` also produce is unlinked and runs into the hundreds of MB to multiple GB (no dead-code elimination happens until something actually links against it), whereas the `cdylib` build is already linked and stripped down to ~30MB. `lore.dll` ships alongside the extension's own DLL as a genuine runtime dependency.
 
 ## Repository layout
 
@@ -32,7 +30,7 @@ addons/godot-lore-plugin/       Standard Godot addon layout (this is what would 
 - Status of staged / unstaged / conflict state and working-tree diff, in the Commit dock and diff panel
 - Stage, unstage, and discard changes (discarding a never-committed file removes it entirely, matching Git's plugin behavior)
 - Commit, with message
-- Commit history list (message, author, date) and per-commit diff, including the repository's initial commit
+- Commit history list (message, author, date) and per-commit changed files & patch contents (the repository's initial commit does not contain patch details)
 - Branch list, current branch, checkout, create, and remove (archive — Lore has no true branch delete)
 - Push and pull against the repository's configured remote
 
@@ -83,6 +81,24 @@ git add third_party/lore
 ```
 
 The next build picks up the new pin automatically — no separate vendoring step.
+
+## Updating the godot-cpp version
+
+`third_party/godot-cpp` is a submodule pinned to a specific godot-cpp commit, which should track the Godot editor version the plugin is built against. To bump it:
+
+```powershell
+git -C third_party/godot-cpp fetch
+git -C third_party/godot-cpp checkout <ref>
+git add third_party/godot-cpp
+```
+
+The next build picks up the new pin automatically — no separate vendoring step.
+
+## Changing the target Godot API version
+
+`GODOTCPP_API_VERSION` in the top-level `CMakeLists.txt` sets the oldest Godot API godot-cpp builds against, currently `"4.3"` — chosen because every `EditorVCSInterface` virtual this plugin implements (status/diff/stage/commit/branch/push/pull) plus `FileAccess` is already present as of 4.3, so pinning any lower buys nothing. Raising it lowers compatibility with older editors; lowering it only makes sense if the plugin stops using an API surface newer than whatever floor you pick.
+
+If you change it, also update `compatibility_minimum` in `addons/godot-lore-plugin/godot-lore-plugin.gdextension` to match — the two are meant to stay in sync.
 
 ## License
 
