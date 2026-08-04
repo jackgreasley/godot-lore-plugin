@@ -16,6 +16,14 @@ if(NOT DEFINED GODOTCPP_API_VERSION)
     set(GODOTCPP_API_VERSION "4.3" CACHE STRING "" FORCE)
 endif()
 
+# This plugin only touches a handful of Godot classes, so compiling
+# bindings for all ~1900 engine classes wastes most of the build — see
+# godot-cpp-build-profile.json. Re-derive its list with
+# `grep -rn "godot_cpp/classes/" src/` if src/ starts using another class.
+if(NOT DEFINED GODOTCPP_BUILD_PROFILE)
+    set(GODOTCPP_BUILD_PROFILE "${CMAKE_SOURCE_DIR}/godot-cpp-build-profile.json" CACHE PATH "" FORCE)
+endif()
+
 project(godot-lore-plugin LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)

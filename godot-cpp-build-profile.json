@@ -1,0 +1,9 @@
+{
+	"enabled_classes": [
+		"EditorVCSInterface",
+		"FileAccess",
+		"DirAccess",
+		"OS",
+		"Mutex"
+	]
+}
