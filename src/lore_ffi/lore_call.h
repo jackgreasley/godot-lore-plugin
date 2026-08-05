@@ -2,9 +2,8 @@
 
 #include "lore_c_api.h"
 
-#include <windows.h>
-
 #include <condition_variable>
+#include <filesystem>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -37,28 +36,24 @@ struct LoreCallResult {
 class ScopedWorkingDirectory {
 public:
 	explicit ScopedWorkingDirectory(const std::string &p_directory) {
-		DWORD length = GetCurrentDirectoryW(0, nullptr);
-		if (length > 0) {
-			previous_directory.resize(length);
-			GetCurrentDirectoryW(length, previous_directory.data());
-			previous_directory.resize(length - 1); // GetCurrentDirectoryW counts the trailing NUL
+		std::error_code ec;
+		previous_directory = std::filesystem::current_path(ec);
+		if (ec) {
+			previous_directory.clear();
 		}
 
 		if (p_directory.empty()) {
 			return;
 		}
-		int wide_length = MultiByteToWideChar(CP_UTF8, 0, p_directory.c_str(), -1, nullptr, 0);
-		if (wide_length <= 0) {
-			return;
-		}
-		std::wstring wide_directory(static_cast<size_t>(wide_length), L'\0');
-		MultiByteToWideChar(CP_UTF8, 0, p_directory.c_str(), -1, wide_directory.data(), wide_length);
-		SetCurrentDirectoryW(wide_directory.c_str());
+		// u8path, not path(string): on Windows the latter converts via the
+		// ANSI codepage, silently mangling non-ASCII project paths.
+		std::filesystem::current_path(std::filesystem::u8path(p_directory), ec);
 	}
 
 	~ScopedWorkingDirectory() {
 		if (!previous_directory.empty()) {
-			SetCurrentDirectoryW(previous_directory.c_str());
+			std::error_code ec;
+			std::filesystem::current_path(previous_directory, ec);
 		}
 	}
 
@@ -66,7 +61,7 @@ public:
 	ScopedWorkingDirectory &operator=(const ScopedWorkingDirectory &) = delete;
 
 private:
-	std::wstring previous_directory;
+	std::filesystem::path previous_directory;
 };
 
 // Runs a Lore C API operation (e.g. lore_repository_status, lore_file_diff)
