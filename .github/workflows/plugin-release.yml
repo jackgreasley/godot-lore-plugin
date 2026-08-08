@@ -1,0 +1,219 @@
+name: Release plugin package
+
+# Builds the real shippable cross-platform release artifact via the reusable
+# per-platform build workflow (plugin-build-platform.yml) — release-lto
+# profile, genuine dual-arch/universal macOS binary, no CI-speed shortcuts —
+# and uploads each platform's output as a workflow artifact for the
+# merge/package/publish steps that follow.
+#
+# Two triggers, one pipeline:
+#   - push of a vX.Y.Z tag: a real release.
+#   - workflow_dispatch: a disposable dry run, used to validate this whole
+#     pipeline without cutting a real tag. Manual runs must supply a version
+#     with a SemVer pre-release/RC suffix (e.g. v0.3.0-rc1) so a disposable
+#     test run can never be mistaken for a real release version.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. v0.3.0-rc1. Must include a SemVer pre-release/RC suffix (-rc1, -beta.1, ...)."
+        required: true
+        type: string
+
+jobs:
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      is_prerelease: ${{ steps.resolve.outputs.is_prerelease }}
+    steps:
+      - name: Resolve and validate version
+        id: resolve
+        shell: bash
+        run: |
+          # Same SemVer pre-release/RC suffix shape used both to validate
+          # workflow_dispatch input and to decide the release's "Pre-release"
+          # flag below - a version has this shape if and only if it should
+          # be marked prerelease.
+          semver_prerelease_re='^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z][0-9A-Za-z.-]*$'
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.version }}"
+            if ! [[ "$version" =~ $semver_prerelease_re ]]; then
+              echo "::error::Manual dispatch requires a version with a SemVer pre-release/RC suffix (e.g. v0.3.0-rc1) to keep disposable test runs distinct from real releases. Got: '$version'"
+              exit 1
+            fi
+          else
+            version="${{ github.ref_name }}"
+          fi
+
+          if [[ "$version" =~ $semver_prerelease_re ]]; then
+            is_prerelease=true
+          else
+            is_prerelease=false
+          fi
+
+          echo "Resolved release version: $version (prerelease: $is_prerelease)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform_dir: addons/godot-lore-plugin/windows
+            rust_targets: ""
+            cmake_extra_args: ""
+            timeout_minutes: 90
+            artifact_name: windows
+          - os: ubuntu-latest
+            platform_dir: addons/godot-lore-plugin/linux
+            rust_targets: ""
+            cmake_extra_args: ""
+            timeout_minutes: 90
+            artifact_name: linux
+          - os: macos-latest
+            platform_dir: addons/godot-lore-plugin/macos
+            # No CMAKE_OSX_ARCHITECTURES override: CMakeLists.txt defaults to
+            # "x86_64;arm64", which is a real universal build (see its
+            # LORE_DUAL_ARCH handling) - unlike plugin-build.yml's CI
+            # validation matrix, which forces arm64-only for speed. Both
+            # Darwin targets must be installed for cargo to build each slice
+            # lipo then merges.
+            rust_targets: "x86_64-apple-darwin,aarch64-apple-darwin"
+            cmake_extra_args: ""
+            # Cold-cache (no prior release-lto cache entry for this Lore SHA
+            # on this git ref) is the case that matters: GitHub Actions cache
+            # scoping is per-ref, and main never populates a release-lto
+            # entry (its CI validation build uses the fast `release` profile
+            # only), so every real vX.Y.Z tag push starts cold here, not just
+            # the first release after a Lore submodule bump. Two observed
+            # cold-cache runs, both spent almost entirely in the single
+            # "Build" step: rc1 1h48m24s, rc2 2h0m42s. 180 min leaves ~1h
+            # (~50%) margin over the worst of those two, versus ~29 min
+            # (~24%) at the previous 150 - enough cushion for the known
+            # variance of shared macOS hosted runners without being
+            # arbitrarily large. Re-tune if a real cold-cache release run
+            # comes in meaningfully over ~2h. Keep rust_targets/
+            # timeout_minutes here in sync with warm-release-cache.yml's
+            # macos entry by hand - see that file's comment for why.
+            timeout_minutes: 180
+            artifact_name: macos
+    uses: ./.github/workflows/plugin-build-platform.yml
+    with:
+      os: ${{ matrix.os }}
+      platform_dir: ${{ matrix.platform_dir }}
+      cargo_profile: release-lto
+      rust_targets: ${{ matrix.rust_targets }}
+      cmake_extra_args: ${{ matrix.cmake_extra_args }}
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      upload_artifact: true
+      artifact_name: ${{ matrix.artifact_name }}
+
+  package:
+    # needs: build waits for every matrix leg; if any platform failed, this
+    # job is skipped entirely rather than assembling a zip that's silently
+    # missing a platform. No if: always() override - that's deliberate.
+    needs: [resolve-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      zip_name: ${{ steps.zip.outputs.zip_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # LICENSE/THIRDPARTY.md live at the repo root; CMakeLists.txt mirrors
+      # them into addons/godot-lore-plugin/ as a local post-build step, but
+      # that copy is gitignored (a build byproduct, not committed there), so
+      # a fresh checkout alone doesn't produce them at the path that ships.
+      - name: Copy root LICENSE/THIRDPARTY.md into the addon folder
+        run: cp LICENSE THIRDPARTY.md addons/godot-lore-plugin/
+
+      # No name/pattern: downloads every artifact from this run (just the
+      # three platform builds at this point), each into its own directory
+      # named after the artifact - windows/linux/macos, matching the
+      # subfolder layout godot-lore-plugin.gdextension expects exactly.
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: addons/godot-lore-plugin
+
+      # Same shared per-platform check plugin-build-platform.yml uses
+      # (scripts/verify-platform-package.sh). Platform directories are
+      # discovered from what the download step above actually populated
+      # (one per platform, matching the build job's matrix artifact_name
+      # entries) rather than re-listing windows/linux/macos by hand a
+      # second time. The count check preserves the existing "fail loudly if
+      # a platform is missing" guarantee even though the names themselves
+      # are no longer enumerated here.
+      - name: Verify assembled package
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          platform_dirs=(addons/godot-lore-plugin/*/)
+          expected_platform_count=3
+          if [ "${#platform_dirs[@]}" -ne "$expected_platform_count" ]; then
+            echo "::error::Expected $expected_platform_count platform directories under addons/godot-lore-plugin/, found ${#platform_dirs[@]}: ${platform_dirs[*]}"
+            exit 1
+          fi
+          for platform_dir in "${platform_dirs[@]}"; do
+            platform_dir="${platform_dir%/}"
+            echo "Checking $platform_dir"
+            ls -la "$platform_dir"
+            bash scripts/verify-platform-package.sh "$platform_dir"
+          done
+          test -f addons/godot-lore-plugin/godot-lore-plugin.gdextension
+          test -f addons/godot-lore-plugin/LICENSE
+          test -f addons/godot-lore-plugin/THIRDPARTY.md
+
+      # addons/ prefix baked into the zip (not just godot-lore-plugin/) so
+      # extracting at a project's root drops it straight into addons/.
+      - name: Zip release package
+        id: zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ needs.resolve-version.outputs.version }}"
+          zip_name="godot-lore-plugin-${version}.zip"
+          zip -r "$zip_name" addons/godot-lore-plugin
+          echo "zip_name=$zip_name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.zip.outputs.zip_name }}
+          path: ${{ steps.zip.outputs.zip_name }}
+
+      # --target pins the release to the exact commit this run built (the
+      # tag itself doesn't exist yet for a workflow_dispatch RC run), rather
+      # than defaulting to the tip of the default branch. --draft leaves the
+      # human-review checkpoint in place; --generate-notes uses GitHub's
+      # auto-generated notes per the spec, no hand-authored body required.
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${{ needs.resolve-version.outputs.version }}"
+          zip_name="${{ steps.zip.outputs.zip_name }}"
+          prerelease_flag=()
+          if [ "${{ needs.resolve-version.outputs.is_prerelease }}" = "true" ]; then
+            prerelease_flag+=(--prerelease)
+          fi
+          gh release create "$version" "$zip_name" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "$version" \
+            --draft \
+            --generate-notes \
+            "${prerelease_flag[@]}"
