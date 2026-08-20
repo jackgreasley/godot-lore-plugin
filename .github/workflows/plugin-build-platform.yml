@@ -90,6 +90,20 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y patchelf
 
+      # The 7GB ubuntu runner OOM-kills the lore build mid-compile (exit
+      # 143; observed repeatedly 2026-08-20, incl. this repo's rc1 run) —
+      # its stock 4GB /swapfile isn't enough for release-lto over the lore
+      # workspace. A second, larger swapfile on the big ephemeral disk
+      # absorbs the peak. Mac/Windows runners have the memory.
+      - name: Add swap (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo fallocate -l 12G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
         with:
