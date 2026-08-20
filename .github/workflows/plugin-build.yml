@@ -62,6 +62,7 @@ jobs:
             cmake_extra_args: "-DCMAKE_OSX_ARCHITECTURES=arm64"
             timeout_minutes: 60
     uses: ./.github/workflows/plugin-build-platform.yml
+    secrets: inherit
     with:
       os: ${{ matrix.os }}
       platform_dir: ${{ matrix.platform_dir }}

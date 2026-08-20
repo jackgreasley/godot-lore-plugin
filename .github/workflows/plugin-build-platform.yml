@@ -56,6 +56,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # third_party/lore lives at github.com/EpicGames/lore, cloneable only
+      # by Epic-linked accounts. Upstream's CI never needs help (its owner
+      # is Epic-linked); on a fork the default token has no access, so when
+      # a GH_LORE_TOKEN secret (a PAT from an Epic-linked account) exists,
+      # rewrite the submodule URL to carry it. Fork-local patch — keep out
+      # of upstream PRs.
+      - name: Authenticate Epic lore submodule (fork)
+        shell: bash
+        env:
+          GH_LORE_TOKEN: ${{ secrets.GH_LORE_TOKEN }}
+        run: |
+          if [ -n "$GH_LORE_TOKEN" ]; then
+            git config --global \
+              url."https://x-access-token:${GH_LORE_TOKEN}@github.com/EpicGames/lore".insteadOf \
+              "https://github.com/EpicGames/lore"
+          fi
+
       # Both submodules are needed for a full build. Neither has nested
       # submodules of its own, so no --recursive.
       - name: Checkout submodules

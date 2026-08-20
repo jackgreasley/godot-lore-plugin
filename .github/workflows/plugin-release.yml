@@ -107,6 +107,7 @@ jobs:
             timeout_minutes: 180
             artifact_name: macos
     uses: ./.github/workflows/plugin-build-platform.yml
+    secrets: inherit
     with:
       os: ${{ matrix.os }}
       platform_dir: ${{ matrix.platform_dir }}
@@ -196,10 +197,12 @@ jobs:
 
       # --target pins the release to the exact commit this run built (the
       # tag itself doesn't exist yet for a workflow_dispatch RC run), rather
-      # than defaulting to the tip of the default branch. --draft leaves the
-      # human-review checkpoint in place; --generate-notes uses GitHub's
+      # than defaulting to the tip of the default branch. Published directly,
+      # not drafted: this fork's releases feed lorepit's release pipeline,
+      # which must go clean-to-published with no manual click (fork-local
+      # divergence; upstream keeps --draft). --generate-notes uses GitHub's
       # auto-generated notes per the spec, no hand-authored body required.
-      - name: Create draft GitHub Release
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -214,6 +217,5 @@ jobs:
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "$version" \
-            --draft \
             --generate-notes \
             "${prerelease_flag[@]}"

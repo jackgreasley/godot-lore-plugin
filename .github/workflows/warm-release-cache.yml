@@ -70,6 +70,7 @@ jobs:
             cmake_extra_args: ""
             timeout_minutes: 180
     uses: ./.github/workflows/plugin-build-platform.yml
+    secrets: inherit
     with:
       os: ${{ matrix.os }}
       platform_dir: ${{ matrix.platform_dir }}
